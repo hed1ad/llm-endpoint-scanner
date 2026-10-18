@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/logo.svg" alt="llm-endpoint-scanner logo" width="140">
+<img src="docs/logo.png" alt="llm-endpoint-scanner logo" width="140">
 
 # llm-endpoint-scanner
 
