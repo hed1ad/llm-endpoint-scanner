@@ -21,21 +21,90 @@ models. You're the AppSec engineer with no code access and no time.
 
 This tool answers that in ~10 minutes instead of a week of manual probing.
 
+## Status
+
+**M1 is complete.** The scanner runs end-to-end: YAML config → HTTP probes →
+canary-based detection → JSON report with verbatim evidence.
+
+What works today:
+
+- Declarative endpoint config (YAML): arbitrary JSON request bodies with a
+  `{{INPUT}}` injection point, dotted-path response extraction, secrets via
+  env vars, fail-fast validation.
+- Two attack categories with canary-marker detection:
+  - **Prompt extraction** — will the model reveal its system prompt?
+  - **Direct injection** — does "ignore previous instructions" work?
+- JSON report per probe: payload sent, response received, verdict
+  (`success` / `failed` / `inconclusive`), confidence, detection method.
+  Secrets never appear in reports.
+- Local mock server (`examples/`) for offline development and testing.
+
+Planned next (see [Spec.md §11](Spec.md#11-milestones)):
+
+| Milestone | Scope |
+|---|---|
+| **M2** | Remaining probe categories: indirect injection, role escape, data leakage, missing limits |
+| **M3** | Baseline & heuristic detection, Markdown report |
+| **M4** | Hardening: `--dry-run`, richer mock server, docs, CI |
+
+## Quick start
+
+```bash
+pip install -e ".[dev]"
+
+# scan the bundled vulnerable mock endpoint
+python examples/mock_server.py &
+llm-scan scan examples/config.mock.yaml
+```
+
+To scan a real service, write a config describing its endpoint:
+
+```yaml
+endpoint:
+  url: https://internal.example.com/api/chat
+  method: POST
+  headers:
+    Authorization: "Bearer ${LLM_SCAN_TOKEN}"   # secrets come from env vars
+    Content-Type: application/json
+  request_template:
+    model: "support-bot-v2"
+    messages:
+      - role: user
+        content: "{{INPUT}}"
+  response_path: "choices.0.message.content"
+
+limits:
+  timeout_seconds: 30
+  max_requests_per_second: 2
+
+report:
+  json_path: report.json
+```
+
+```bash
+export LLM_SCAN_TOKEN=...
+llm-scan scan my-service.yaml
+```
+
 ## What it does
 
 Sends a set of probes to the endpoint and judges the responses:
 
-| Probe | Question it answers |
-|---|---|
-| Prompt extraction | Will the model reveal its system prompt? |
-| Direct injection | Does "ignore previous instructions" work? |
-| Indirect injection | Can instructions hide inside a submitted document? |
-| Role escape | Will the support bot write poems and solve math for free? |
-| Data leakage | Do responses contain other users' data or internals? |
-| Missing limits | Rate limiting? Input length caps? |
+| Probe | Question it answers | Status |
+|---|---|---|
+| Prompt extraction | Will the model reveal its system prompt? | ✅ M1 |
+| Direct injection | Does "ignore previous instructions" work? | ✅ M1 |
+| Indirect injection | Can instructions hide inside a submitted document? | planned (M2) |
+| Role escape | Will the support bot write poems and solve math for free? | planned (M2) |
+| Data leakage | Do responses contain other users' data or internals? | planned (M2) |
+| Missing limits | Rate limiting? Input length caps? | planned (M2) |
 
-Results come out as **JSON** (for automation) and **Markdown** (for humans),
-with verbatim request/response evidence for every finding.
+Detection is layered (Spec.md §6): today it is **canary markers** — a unique
+per-run token embedded in the probe; if it comes back, the injected
+instruction was executed. Baseline comparison and heuristics arrive in M3.
+
+Results come out as **JSON** (for automation), with verbatim request/response
+evidence for every finding. A **Markdown** report for humans is planned in M3.
 
 ## How it differs from garak / PyRIT / promptfoo
 
@@ -51,6 +120,12 @@ canary-marker checks, detection relies on heuristics and can produce both
 false positives and false negatives. **A clean report is not proof of safety** —
 this tool answers "where to look first," not "is it secure."
 See [Spec.md §10](Spec.md#10-limitations).
+
+## Development
+
+```bash
+python -m pytest -q    # run the test suite
+```
 
 ## Documentation
 
