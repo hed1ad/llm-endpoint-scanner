@@ -48,7 +48,9 @@ def _echo_transport(request: httpx.Request) -> httpx.Response:
 
 def test_send_success(monkeypatch):
     monkeypatch.setenv("LLM_SCAN_TOKEN", "tok123")
-    client = EndpointClient(ENDPOINT, LIMITS, transport=httpx.MockTransport(_echo_transport))
+    client = EndpointClient(
+        ENDPOINT, LIMITS, transport=httpx.MockTransport(_echo_transport)
+    )
     try:
         assert client.send("hello") == "echo: hello"
     finally:
@@ -71,6 +73,7 @@ def test_send_http_500_raises(monkeypatch):
 
 def test_send_timeout_raises(monkeypatch):
     monkeypatch.setenv("LLM_SCAN_TOKEN", "x")
+
     def timeout_handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("boom", request=request)
 

@@ -73,7 +73,9 @@ def test_empty_response_path(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_SCAN_TOKEN", "x")
     path = tmp_path / "empty_path.yaml"
     path.write_text(
-        VALID_YAML.replace('response_path: "choices.0.message.content"', 'response_path: ""'),
+        VALID_YAML.replace(
+            'response_path: "choices.0.message.content"', 'response_path: ""'
+        ),
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match="response_path"):

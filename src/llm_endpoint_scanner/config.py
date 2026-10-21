@@ -63,7 +63,8 @@ def resolve_env_headers(headers: dict[str, str]) -> dict[str, str]:
             name = match.group(1)
             if name not in os.environ:
                 raise ConfigError(
-                    f"Header references environment variable ${{{name}}} which is not set"
+                    f"Header references environment variable ${{{name}}} "
+                    "which is not set"
                 )
             return os.environ[name]
 

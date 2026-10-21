@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -33,7 +34,9 @@ def main() -> None:
 
 @app.command()
 def scan(
-    config_path: Path = typer.Argument(..., help="Path to the endpoint YAML config."),
+    config_path: Annotated[
+        Path, typer.Argument(help="Path to the endpoint YAML config.")
+    ],
 ) -> None:
     """Scan the endpoint described by CONFIG_PATH."""
     try:
@@ -48,9 +51,7 @@ def scan(
     for result in report.probes:
         verdict = result.judgment.verdict.value
         style = _VERDICT_STYLE[verdict]
-        console.print(
-            f"  [{style}]{verdict:<12}[/] {result.category}/{result.name}"
-        )
+        console.print(f"  [{style}]{verdict:<12}[/] {result.category}/{result.name}")
 
     table = Table(title="Summary")
     table.add_column("Category")

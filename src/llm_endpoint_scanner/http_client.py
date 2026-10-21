@@ -70,16 +70,14 @@ class EndpointClient:
     ) -> None:
         self._endpoint = endpoint
         self._limits = limits
-        self._client = httpx.Client(
-            timeout=limits.timeout_seconds, transport=transport
-        )
+        self._client = httpx.Client(timeout=limits.timeout_seconds, transport=transport)
         self._min_interval = 1.0 / limits.max_requests_per_second
         self._last_request_at: float | None = None
 
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "EndpointClient":
+    def __enter__(self) -> EndpointClient:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
@@ -104,9 +102,7 @@ class EndpointClient:
             raise EndpointError(f"Transport error: {exc}") from exc
 
         if response.status_code >= 400:
-            raise EndpointError(
-                f"Endpoint returned HTTP {response.status_code}"
-            )
+            raise EndpointError(f"Endpoint returned HTTP {response.status_code}")
         try:
             data = response.json()
         except ValueError as exc:

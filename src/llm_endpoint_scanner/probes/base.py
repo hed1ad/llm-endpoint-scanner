@@ -10,5 +10,4 @@ from ..models import Probe
 class ProbeCategory(Protocol):
     category: str
 
-    def probes(self) -> list[Probe]:
-        ...
+    def probes(self) -> list[Probe]: ...
