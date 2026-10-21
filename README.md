@@ -124,8 +124,19 @@ See [Spec.md §10](Spec.md#10-limitations).
 ## Development
 
 ```bash
-python -m pytest -q    # run the test suite
+pip install -e ".[dev]"
+pre-commit install        # ruff check --fix and ruff format on every commit
+
+python -m pytest -q       # run the test suite
+ruff check .              # lint
+ruff format --check .     # formatting
 ```
+
+CI runs on every push to `main` and every pull request:
+
+- **Tests** — pytest on Python 3.10–3.13
+- **Semgrep** — secrets detection (`p/secrets` ruleset)
+- **TruffleHog** — verified secret scanning over full git history
 
 ## Documentation
 

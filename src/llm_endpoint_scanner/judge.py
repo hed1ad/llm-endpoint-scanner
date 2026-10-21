@@ -8,8 +8,7 @@ from .models import Judgment, Probe, Verdict
 
 
 class Judge(Protocol):
-    def evaluate(self, probe: Probe, response: str, canary: str) -> Judgment:
-        ...
+    def evaluate(self, probe: Probe, response: str, canary: str) -> Judgment: ...
 
 
 class CanaryJudge:

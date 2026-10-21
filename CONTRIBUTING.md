@@ -30,6 +30,37 @@ milestone forward, not expand the scope.
 - Use the mock server (`examples/`) for integration-style checks — never run
   the scanner against third-party endpoints without authorization.
 
+## Local checks
+
+Install the dev extras and enable the pre-commit hooks:
+
+```bash
+pip install -e ".[dev]"
+pre-commit install
+```
+
+The hooks run `ruff check --fix` and `ruff format` on every commit. Run them
+against the whole tree at any time with `pre-commit run --all-files`.
+
+Before opening a PR, make sure these pass:
+
+```bash
+python -m pytest -q
+ruff check .
+ruff format --check .
+```
+
+## CI
+
+Every push to `main` and every pull request runs the full pipeline
+(`.github/workflows/ci.yml`):
+
+- **Tests** — pytest on Python 3.10–3.13.
+- **Semgrep** — secrets detection using the `p/secrets` ruleset.
+- **TruffleHog** — scans the full git history for verified leaked secrets.
+
+All three jobs must pass for a PR to be merged.
+
 ## Pull requests
 
 - One concern per PR; reference the milestone or requirement ID (e.g. FR-2,
