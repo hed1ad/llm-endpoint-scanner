@@ -80,8 +80,8 @@ def test_scan_writes_both_reports(tmp_path, monkeypatch):
 
     real_run_scan = runner_module.run_scan
 
-    def patched(cfg, client=None, judge=None):
-        return real_run_scan(cfg, client=client or _echo_client(cfg))
+    def patched(cfg, client=None, judge=None, **kwargs):
+        return real_run_scan(cfg, client=client or _echo_client(cfg), **kwargs)
 
     monkeypatch.setattr("llm_endpoint_scanner.cli.run_scan", patched)
     result = runner.invoke(app, ["scan", _write_config(tmp_path)])
@@ -96,8 +96,8 @@ def test_scan_fail_on_success_exits_1(tmp_path, monkeypatch):
 
     real_run_scan = runner_module.run_scan
 
-    def patched(cfg, client=None, judge=None):
-        return real_run_scan(cfg, client=client or _echo_client(cfg))
+    def patched(cfg, client=None, judge=None, **kwargs):
+        return real_run_scan(cfg, client=client or _echo_client(cfg), **kwargs)
 
     monkeypatch.setattr("llm_endpoint_scanner.cli.run_scan", patched)
     result = runner.invoke(

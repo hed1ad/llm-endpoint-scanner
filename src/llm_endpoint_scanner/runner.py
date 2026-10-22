@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 import time
+from collections.abc import Sequence
 from datetime import datetime, timezone
 
 from . import __version__
@@ -11,8 +12,8 @@ from .config import ScanConfig, config_hash
 from .http_client import EndpointClient, EndpointError
 from .judge import BASELINE_PROMPT, CompositeJudge
 from .models import Judgment, Probe, ProbeResult, Verdict
-from .probes import ALL_CATEGORIES
 from .reporting import Report, write_json_report, write_markdown_report
+from .selection import plan_scan
 
 __all__ = [
     "Report",
@@ -34,7 +35,11 @@ def _worst(verdicts: list[Verdict]) -> Verdict:
 
 
 def _skipped(
-    probe: Probe, payload: str, reason: str, requests_sent: int = 0
+    probe: Probe,
+    payload: str,
+    reason: str,
+    requests_sent: int = 0,
+    skipped: bool = False,
 ) -> ProbeResult:
     return ProbeResult(
         category=probe.category,
@@ -50,6 +55,7 @@ def _skipped(
         ),
         requests_sent=requests_sent,
         requests_accepted=0,
+        skipped=skipped,
     )
 
 
@@ -108,8 +114,12 @@ def run_scan(
     cfg: ScanConfig,
     client: EndpointClient | None = None,
     judge: CompositeJudge | None = None,
+    include: Sequence[str] | None = None,
+    exclude: Sequence[str] | None = None,
+    max_requests: int | None = None,
 ) -> Report:
     judge = judge or CompositeJudge()
+    plan = plan_scan(include, exclude, max_requests)
     run_id = secrets.token_hex(4)
     started_at = time.monotonic()
     results: list[ProbeResult] = []
@@ -125,22 +135,21 @@ def run_scan(
         except EndpointError:
             baseline = None
 
-        for category in ALL_CATEGORIES:
-            for probe in category.probes():
-                seq += 1
-                canary = make_canary(run_id, seq)
-                payload = probe.payload_template.format(canary=canary)
-                results.append(
-                    _run_probe(
-                        probe,
-                        payload,
-                        client,
-                        judge,
-                        canary,
-                        baseline,
-                        cfg.limits.max_probe_length,
-                    )
+        for probe in plan.probes:
+            seq += 1
+            canary = make_canary(run_id, seq)
+            payload = probe.payload_template.format(canary=canary)
+            results.append(
+                _run_probe(
+                    probe,
+                    payload,
+                    client,
+                    judge,
+                    canary,
+                    baseline,
+                    cfg.limits.max_probe_length,
                 )
+            )
 
     if client is not None:
         _run(client)
@@ -148,13 +157,21 @@ def run_scan(
         with EndpointClient(cfg.endpoint, cfg.limits) as owned:
             _run(owned)
 
+    # Budget-skipped probes are recorded with a reason (never silently
+    # dropped) but excluded from the summary and the overall verdict (FR-8).
+    for probe, reason in plan.skipped:
+        seq += 1
+        payload = probe.payload_template.format(canary=make_canary(run_id, seq))
+        results.append(_skipped(probe, payload, reason, skipped=True))
+
+    active = [r for r in results if not r.skipped]
     by_category: dict[str, list[Verdict]] = {}
-    for result in results:
+    for result in active:
         by_category.setdefault(result.category, []).append(result.judgment.verdict)
     summary = {cat: _worst(verdicts).value for cat, verdicts in by_category.items()}
     overall = (
-        _worst([r.judgment.verdict for r in results]).value
-        if results
+        _worst([r.judgment.verdict for r in active]).value
+        if active
         else Verdict.INCONCLUSIVE.value
     )
 
