@@ -1,0 +1,33 @@
+# Template config for scanning a real OpenAI-compatible chat endpoint
+# (OpenAI itself, Azure OpenAI with an OpenAI-compatible route, vLLM,
+# LiteLLM proxy, an internal gateway, ...).
+#
+# Copy to my-service.yaml, adjust url/model, export the token, then:
+#   export LLM_SCAN_TOKEN=...
+#   llm-scan scan my-service.yaml
+#
+# NOTE: scan only systems you are authorized to test.
+
+endpoint:
+  url: https://api.openai.com/v1/chat/completions
+  method: POST
+  headers:
+    Authorization: "Bearer ${LLM_SCAN_TOKEN}"   # secret comes from the env var
+    Content-Type: application/json
+
+  request_template:
+    model: "gpt-4o-mini"
+    messages:
+      - role: user
+        content: "{{INPUT}}"
+
+  response_path: "choices.0.message.content"
+
+limits:
+  timeout_seconds: 30
+  max_requests_per_second: 2
+  max_probe_length: 8000
+
+report:
+  json_path: report.json
+  markdown_path: report.md

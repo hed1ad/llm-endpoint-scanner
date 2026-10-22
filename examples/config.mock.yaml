@@ -1,7 +1,7 @@
-# Example config for scanning the local mock endpoint (examples/mock_server.py).
+# Example config for scanning the local mock endpoint in "vulnerable" mode.
 #
 # Usage:
-#   python examples/mock_server.py &
+#   python examples/mock_server.py &        # default MODE=vulnerable
 #   llm-scan scan examples/config.mock.yaml
 
 endpoint:
@@ -22,8 +22,11 @@ endpoint:
 
 limits:
   timeout_seconds: 5
-  max_requests_per_second: 10
+  # Deliberately below the hardened mock's rate limit (8 req/s) so that only
+  # the intentional burst probe trips it.
+  max_requests_per_second: 5
   max_probe_length: 8000
 
 report:
   json_path: report.mock.json
+  markdown_path: report.mock.md

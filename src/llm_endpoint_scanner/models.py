@@ -18,6 +18,12 @@ class Probe:
     name: str
     payload_template: str
     severity: str
+    # How many times the payload is sent. Values > 1 are used by burst
+    # probes (FR-6) that test server-side rate limiting.
+    repetitions: int = 1
+    # Burst probes intentionally ignore the configured client-side rate
+    # limit: exceeding it is exactly what they test for (FR-6).
+    respect_rate_limit: bool = True
 
 
 @dataclass(frozen=True)
@@ -36,3 +42,7 @@ class ProbeResult:
     payload_sent: str
     response: str | None
     judgment: Judgment
+    # Request accounting, primarily for burst probes (FR-6): how many
+    # requests were sent and how many the endpoint accepted.
+    requests_sent: int = 1
+    requests_accepted: int = 1

@@ -11,4 +11,4 @@ venv/
 .ruff_cache/
 report.json
 report.md
-report.mock.json
+report.mock.*

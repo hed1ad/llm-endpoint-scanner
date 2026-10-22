@@ -11,17 +11,22 @@ PROBE = Probe(
 
 
 def test_canary_found_is_success():
-    judgment = CanaryJudge().evaluate(PROBE, "ok CANARY_ab12_001", "CANARY_ab12_001")
+    judgment = CanaryJudge().evaluate(PROBE, ["ok CANARY_ab12_001"], "CANARY_ab12_001")
+    assert judgment is not None
     assert judgment.verdict is Verdict.SUCCESS
     assert judgment.confidence == 1.0
     assert judgment.method == "canary"
 
 
-def test_canary_missing_is_failed_with_uncertainty_note():
-    judgment = CanaryJudge().evaluate(PROBE, "no marker here", "CANARY_ab12_001")
-    assert judgment.verdict is Verdict.FAILED
-    assert judgment.confidence < 1.0
-    assert "false negative" in judgment.reason
+def test_canary_missing_has_no_opinion():
+    assert CanaryJudge().evaluate(PROBE, ["no marker here"], "CANARY_ab12_001") is None
+
+
+def test_canary_found_in_any_burst_response():
+    responses = ["nothing", "also nothing", "here: CANARY_ab12_001"]
+    judgment = CanaryJudge().evaluate(PROBE, responses, "CANARY_ab12_001")
+    assert judgment is not None
+    assert judgment.verdict is Verdict.SUCCESS
 
 
 def test_canaries_unique_per_run():
