@@ -5,6 +5,7 @@ import httpx
 
 from llm_endpoint_scanner.config import ScanConfig
 from llm_endpoint_scanner.http_client import EndpointClient
+from llm_endpoint_scanner.judge import BASELINE_PROMPT
 from llm_endpoint_scanner.models import Verdict
 from llm_endpoint_scanner.runner import run_scan, write_json_report
 
@@ -14,7 +15,7 @@ CFG = ScanConfig.model_validate(
     {
         "endpoint": {
             "url": "https://example.com/api/chat",
-            "headers": {"Authorization": f"Bearer ${{{'LLM_SCAN_TOKEN'}}}"},
+            "headers": {"Authorization": "Bearer ${LLM_SCAN_TOKEN}"},
             "request_template": {
                 "messages": [{"role": "user", "content": "{{INPUT}}"}]
             },
@@ -43,7 +44,14 @@ def test_run_scan_end_to_end(monkeypatch):
         report = run_scan(CFG, client=client)
 
     categories = {r.category for r in report.probes}
-    assert categories == {"prompt_extraction", "direct_injection"}
+    assert categories == {
+        "prompt_extraction",
+        "direct_injection",
+        "indirect_injection",
+        "role_escape",
+        "data_leakage",
+        "missing_limits",
+    }
     assert len(report.run_id) == 8
     assert all(r.judgment.verdict is Verdict.SUCCESS for r in report.probes)
     assert all(r.response is not None for r in report.probes)
@@ -58,6 +66,73 @@ def test_run_scan_end_to_end(monkeypatch):
     assert len(report.config_hash) == 64
 
 
+def test_baseline_prompt_is_sent_first_and_recorded(monkeypatch):
+    monkeypatch.setenv("LLM_SCAN_TOKEN", SECRET)
+    seen: list[str] = []
+
+    def recording_transport(request: httpx.Request) -> httpx.Response:
+        text = json.loads(request.content)["messages"][0]["content"]
+        seen.append(text)
+        return httpx.Response(200, json={"choices": [{"message": {"content": text}}]})
+
+    client = EndpointClient(
+        CFG.endpoint, CFG.limits, transport=httpx.MockTransport(recording_transport)
+    )
+    with client:
+        report = run_scan(CFG, client=client)
+
+    assert seen[0] == BASELINE_PROMPT
+    assert report.baseline_response == BASELINE_PROMPT
+    # Baseline is control traffic, not a finding.
+    assert all(r.payload_sent != BASELINE_PROMPT for r in report.probes)
+
+
+def test_burst_probe_sends_all_repetitions_unthrottled(monkeypatch):
+    monkeypatch.setenv("LLM_SCAN_TOKEN", SECRET)
+    received = 0
+
+    def counting_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal received
+        received += 1
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    client = EndpointClient(
+        CFG.endpoint, CFG.limits, transport=httpx.MockTransport(counting_transport)
+    )
+    with client:
+        report = run_scan(CFG, client=client)
+
+    burst = next(r for r in report.probes if r.name == "burst_acceptance")
+    assert burst.requests_sent == burst.requests_accepted == 10
+    assert received == 1 + sum(r.requests_sent for r in report.probes)  # +baseline
+
+
+def test_rate_limited_burst_is_failed(monkeypatch):
+    monkeypatch.setenv("LLM_SCAN_TOKEN", SECRET)
+    burst_calls = 0
+
+    def limiting_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal burst_calls
+        text = json.loads(request.content)["messages"][0]["content"]
+        if "Reply with exactly this token" in text:
+            burst_calls += 1
+            if burst_calls > 3:
+                return httpx.Response(429, json={"error": "slow down"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": text}}]})
+
+    client = EndpointClient(
+        CFG.endpoint, CFG.limits, transport=httpx.MockTransport(limiting_transport)
+    )
+    with client:
+        report = run_scan(CFG, client=client)
+
+    burst = next(r for r in report.probes if r.name == "burst_acceptance")
+    assert burst.requests_sent == 10
+    assert burst.requests_accepted == 3
+    assert burst.judgment.verdict is Verdict.FAILED
+    assert burst.judgment.method == "burst"
+
+
 def test_endpoint_error_becomes_inconclusive(monkeypatch):
     monkeypatch.setenv("LLM_SCAN_TOKEN", SECRET)
     client = EndpointClient(
@@ -67,8 +142,10 @@ def test_endpoint_error_becomes_inconclusive(monkeypatch):
     )
     with client:
         report = run_scan(CFG, client=client)
-    assert all(r.judgment.verdict is Verdict.INCONCLUSIVE for r in report.probes)
-    assert all("Endpoint error" in r.judgment.reason for r in report.probes)
+    single_shot = [r for r in report.probes if r.requests_sent == 1]
+    assert single_shot
+    assert all(r.judgment.verdict is Verdict.INCONCLUSIVE for r in single_shot)
+    assert all("Endpoint error" in r.judgment.reason for r in single_shot)
 
 
 def test_json_report_has_no_secrets(monkeypatch, tmp_path):
@@ -77,7 +154,7 @@ def test_json_report_has_no_secrets(monkeypatch, tmp_path):
         report = run_scan(CFG, client=client)
 
     out = tmp_path / "report.json"
-    write_json_report(report, out)
+    write_json_report(report, str(out))
     raw = out.read_text(encoding="utf-8")
     assert SECRET not in raw
     assert "Authorization" not in raw
@@ -87,3 +164,4 @@ def test_json_report_has_no_secrets(monkeypatch, tmp_path):
     assert data["probes"][0]["judgment"]["verdict"] == "success"
     assert data["probes"][0]["payload_sent"]
     assert data["probes"][0]["response"]
+    assert "baseline_response" in data

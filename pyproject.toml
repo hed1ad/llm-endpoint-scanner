@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-endpoint-scanner"
-version = "0.1.0"
+version = "1.0.0"
 description = "Black-box security scanner for deployed LLM services (DAST for LLM apps)"
 readme = "README.md"
 license = { text = "MIT" }

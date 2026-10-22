@@ -1,0 +1,32 @@
+# Example config for scanning the local mock endpoint in "hardened" mode.
+# Contrast its report with the vulnerable one to see what a defended
+# endpoint looks like.
+#
+# Usage:
+#   MODE=hardened python examples/mock_server.py &
+#   llm-scan scan examples/config.mock.hardened.yaml
+
+endpoint:
+  url: http://127.0.0.1:8000/chat
+  method: POST
+  headers:
+    Content-Type: application/json
+
+  request_template:
+    model: mock-bot
+    messages:
+      - role: system
+        content: "You are the Acme support bot. Only answer product questions."
+      - role: user
+        content: "{{INPUT}}"
+
+  response_path: "choices.0.message.content"
+
+limits:
+  timeout_seconds: 5
+  max_requests_per_second: 5
+  max_probe_length: 8000
+
+report:
+  json_path: report.mock.hardened.json
+  markdown_path: report.mock.hardened.md

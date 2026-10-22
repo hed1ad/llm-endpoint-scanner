@@ -83,8 +83,9 @@ class EndpointClient:
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    def send(self, payload: str) -> str:
-        self._throttle()
+    def send(self, payload: str, *, throttle: bool = True) -> str:
+        if throttle:
+            self._throttle()
         body = render_request(self._endpoint.request_template, payload)
         headers = resolve_env_headers(self._endpoint.headers)
         try:

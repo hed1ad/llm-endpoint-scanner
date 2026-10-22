@@ -1,35 +1,28 @@
-"""Scan orchestration and reporting."""
+"""Scan orchestration: baseline, probe execution, report assembly."""
 
 from __future__ import annotations
 
-import json
 import secrets
 import time
-from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 
 from . import __version__
 from .config import ScanConfig, config_hash
 from .http_client import EndpointClient, EndpointError
-from .judge import CanaryJudge, Judge
-from .models import Judgment, ProbeResult, Verdict
+from .judge import BASELINE_PROMPT, CompositeJudge
+from .models import Judgment, Probe, ProbeResult, Verdict
 from .probes import ALL_CATEGORIES
+from .reporting import Report, write_json_report, write_markdown_report
+
+__all__ = [
+    "Report",
+    "make_canary",
+    "run_scan",
+    "write_json_report",
+    "write_markdown_report",
+]
 
 _VERDICT_RANK = {Verdict.FAILED: 0, Verdict.INCONCLUSIVE: 1, Verdict.SUCCESS: 2}
-
-
-@dataclass(frozen=True)
-class Report:
-    run_id: str
-    target: str
-    timestamp: str
-    scanner_version: str
-    config_hash: str
-    duration_seconds: float
-    overall_verdict: str
-    summary: dict[str, str]
-    probes: list[ProbeResult] = field(default_factory=list)
 
 
 def make_canary(run_id: str, seq: int) -> str:
@@ -40,70 +33,112 @@ def _worst(verdicts: list[Verdict]) -> Verdict:
     return max(verdicts, key=lambda v: _VERDICT_RANK[v])
 
 
+def _skipped(
+    probe: Probe, payload: str, reason: str, requests_sent: int = 0
+) -> ProbeResult:
+    return ProbeResult(
+        category=probe.category,
+        name=probe.name,
+        severity=probe.severity,
+        payload_sent=payload,
+        response=None,
+        judgment=Judgment(
+            verdict=Verdict.INCONCLUSIVE,
+            confidence=1.0,
+            method="none",
+            reason=reason,
+        ),
+        requests_sent=requests_sent,
+        requests_accepted=0,
+    )
+
+
+def _run_probe(
+    probe: Probe,
+    payload: str,
+    client: EndpointClient,
+    judge: CompositeJudge,
+    canary: str,
+    baseline: str | None,
+    max_probe_length: int,
+) -> ProbeResult:
+    if len(payload) > max_probe_length:
+        return _skipped(
+            probe,
+            payload,
+            f"Payload exceeds max_probe_length={max_probe_length}; probe skipped.",
+        )
+
+    responses: list[str] = []
+    first_error: EndpointError | None = None
+    for _ in range(probe.repetitions):
+        try:
+            responses.append(client.send(payload, throttle=probe.respect_rate_limit))
+        except EndpointError as exc:
+            # For burst probes a rejection (e.g. HTTP 429) is the signal, not a
+            # scan failure: keep going and let the judge count acceptances.
+            if probe.repetitions <= 1:
+                return _skipped(
+                    probe, payload, f"Endpoint error: {exc}", requests_sent=1
+                )
+            if first_error is None:
+                first_error = exc
+
+    judgment = judge.evaluate(probe, responses, canary, baseline)
+    if first_error is not None and responses:
+        judgment = Judgment(
+            verdict=judgment.verdict,
+            confidence=judgment.confidence,
+            method=judgment.method,
+            reason=f"{judgment.reason} (first rejection: {first_error})",
+        )
+    return ProbeResult(
+        category=probe.category,
+        name=probe.name,
+        severity=probe.severity,
+        payload_sent=payload,
+        response=responses[0] if responses else None,
+        judgment=judgment,
+        requests_sent=probe.repetitions,
+        requests_accepted=len(responses),
+    )
+
+
 def run_scan(
     cfg: ScanConfig,
     client: EndpointClient | None = None,
-    judge: Judge | None = None,
+    judge: CompositeJudge | None = None,
 ) -> Report:
-    judge = judge or CanaryJudge()
+    judge = judge or CompositeJudge()
     run_id = secrets.token_hex(4)
     started_at = time.monotonic()
     results: list[ProbeResult] = []
     seq = 0
+    baseline: str | None = None
 
     def _run(client: EndpointClient) -> None:
-        nonlocal seq
+        nonlocal seq, baseline
+        # Spec §6.2: a neutral control prompt establishes the baseline used by
+        # the divergence heuristic. A baseline failure never aborts the scan.
+        try:
+            baseline = client.send(BASELINE_PROMPT)
+        except EndpointError:
+            baseline = None
+
         for category in ALL_CATEGORIES:
             for probe in category.probes():
                 seq += 1
                 canary = make_canary(run_id, seq)
                 payload = probe.payload_template.format(canary=canary)
-                if len(payload) > cfg.limits.max_probe_length:
-                    results.append(
-                        ProbeResult(
-                            category=probe.category,
-                            name=probe.name,
-                            severity=probe.severity,
-                            payload_sent=payload,
-                            response=None,
-                            judgment=Judgment(
-                                verdict=Verdict.INCONCLUSIVE,
-                                confidence=1.0,
-                                method="none",
-                                reason="Payload exceeds "
-                                f"max_probe_length={cfg.limits.max_probe_length}; "
-                                "probe skipped.",
-                            ),
-                        )
-                    )
-                    continue
-                try:
-                    response = client.send(payload)
-                except EndpointError as exc:
-                    results.append(
-                        ProbeResult(
-                            category=probe.category,
-                            name=probe.name,
-                            severity=probe.severity,
-                            payload_sent=payload,
-                            response=None,
-                            judgment=Judgment(
-                                verdict=Verdict.INCONCLUSIVE,
-                                confidence=1.0,
-                                method="none",
-                                reason=f"Endpoint error: {exc}",
-                            ),
-                        )
-                    )
-                    continue
                 results.append(
-                    ProbeResult(
-                        category=probe.category,
-                        name=probe.name,
-                        severity=probe.severity,
-                        payload_sent=payload,
-                        response=response,
-                        judgment=judge.evaluate(probe, response, canary),
+                    _run_probe(
+                        probe,
+                        payload,
+                        client,
+                        judge,
+                        canary,
+                        baseline,
+                        cfg.limits.max_probe_length,
                     )
                 )
 
@@ -132,21 +167,6 @@ def run_scan(
         duration_seconds=round(time.monotonic() - started_at, 3),
         overall_verdict=overall,
         summary=summary,
+        baseline_response=baseline,
         probes=results,
-    )
-
-
-def write_json_report(report: Report, path: str | Path) -> None:
-    """Serialize the report. Secrets never enter it: only payloads and
-    responses are recorded, never request headers (NFR-2)."""
-    data = asdict(report)
-    for probe in data["probes"]:
-        judgment = probe["judgment"]
-        judgment["verdict"] = (
-            judgment["verdict"].value
-            if isinstance(judgment["verdict"], Verdict)
-            else judgment["verdict"]
-        )
-    Path(path).write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
