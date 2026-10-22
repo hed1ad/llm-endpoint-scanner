@@ -10,6 +10,9 @@ The closest analogy is DAST for LLM applications: the same way OWASP ZAP works
 with a web application over HTTP knowing nothing about its internals, this tool
 works with an LLM service over its API.
 
+The tool is developed as an open-source product (MIT license) and distributed
+via PyPI as `llm-endpoint-scanner`. (added 2026-10-22, see §12)
+
 ## 2. Problem Statement
 
 A typical and unpleasant situation: a company ends up with several LLM-powered
@@ -41,7 +44,10 @@ manual probing. It does not replace deep analysis — it answers the question
 - Testing the model itself. Vulnerabilities usually live not in the model but
   in how it is wired into the application — that wiring is the target.
 - Replacing manual, in-depth security assessment.
-- Multi-turn conversation attacks (single-turn only in the initial versions).
+- Multi-turn conversation attacks. Single-turn only: multi-turn campaigns
+  require an attacker LLM, break the "answer in ten minutes" promise, and are
+  already covered well by PyRIT; this remains out of scope for v1.x.
+  (clarified 2026-10-22, see §12)
 
 ## 4. Input: Endpoint Configuration
 
@@ -122,6 +128,85 @@ context contents, or internal service information.
 How many requests pass in a burst; how the endpoint reacts to very long input.
 An endpoint with no rate limiting or input caps is an abuse vector.
 
+### FR-7: Compliance Mapping (added 2026-10-22, see §12)
+
+Every built-in probe category maps to OWASP LLM Top 10 (2025) and MITRE ATLAS.
+Both reports carry the mapping: per-probe and per-category fields in JSON, a
+dedicated column in the Markdown summary table. The mapping table states the
+framework versions it targets and lives in versioned code, not prose.
+
+Acceptance criteria:
+
+- Every built-in probe has a non-empty mapping (OWASP id + ATLAS technique).
+- JSON report exposes `compliance` per probe and per category; Markdown shows
+  the mapping in the summary table and per-finding detail.
+- The report header names the framework versions used (e.g. "OWASP LLM Top 10
+  2025").
+
+### FR-8: Scan Selection and Request Budget (added 2026-10-22, see §12)
+
+The CLI allows running a subset of the scan: `--include` / `--exclude` by
+category and by probe name, and `--max-requests N` as a hard budget. Unknown
+names fail fast (exit 2). `--dry-run` reflects the selection exactly.
+
+Acceptance criteria:
+
+- A selected subset sends only its probes plus the single baseline request.
+- The request budget is never exceeded; probes that do not fit are recorded
+  as skipped with a reason, not silently dropped.
+- Summary, triage, and `--fail-on` consider only the probes that ran.
+
+### FR-9: User-Defined Probes (added 2026-10-22, see §12)
+
+The config accepts a `custom_probes` list: name, category (existing or new),
+payload template with the `{canary}` placeholder, severity, and optional
+repetitions. Custom probes are validated fail-fast (REQ-C4) and behave exactly
+like built-in ones: same judges, reports, dry-run, and triage.
+
+Acceptance criteria:
+
+- A config with a valid custom probe runs it and reports it like any built-in
+  probe, under its declared category.
+- Invalid custom probes (missing `{canary}`, unknown fields, bad severity)
+  abort before any request with a clear error.
+- Custom categories appear in the summary and triage without code changes
+  (extends NFR-3).
+
+### FR-10: Optional LLM-as-Judge Layer (added 2026-10-22, see §12)
+
+An optional detection layer that asks a user-configured judge LLM to classify
+responses the local layers could not resolve confidently (verdict
+`inconclusive` or confidence below a threshold). Off by default; enabling it
+is an explicit opt-in (NFR-6). The judge receives only the probe payload and
+the response text — never request headers, secrets, or config internals.
+
+Acceptance criteria:
+
+- With no judge configured, a scan sends zero extra requests (verified by
+  test) and behaves exactly as before.
+- A judge verdict is recorded with method `llm_judge` and its own confidence;
+  the report still states which method produced the verdict (§6 honesty
+  requirement).
+- If the judge endpoint errors, the scan falls back to the local verdict and
+  marks the probe accordingly; the scan never aborts on judge failure.
+- A startup warning states that responses leave the machine when the layer
+  is enabled.
+
+### FR-11: Multi-Endpoint Sweep (added 2026-10-22, see §12)
+
+One command scans several endpoints (a list of config files or a directory)
+and produces an aggregate triage report answering the §2 question "which of
+these services do I look at first": targets ranked by worst verdict and
+severity. Per-target reports are still written individually.
+
+Acceptance criteria:
+
+- The aggregate report (JSON + Markdown) lists every target with its overall
+  verdict, ranked worst-first, with per-category summary.
+- A failing or unreachable target is recorded as such and never aborts the
+  sweep.
+- Per-target limits (rate, timeout) are respected independently.
+
 ## 6. Detection / Judging
 
 **Determining that an attack succeeded is harder than carrying it out.**
@@ -154,9 +239,25 @@ Two report formats from the same scan:
   confidence, detection method, severity.
 - **Markdown** — for humans. A summary table of categories with verdicts,
   then per-finding detail with request/response examples.
+- **Compliance mapping** — both reports map every category and finding to
+  OWASP LLM Top 10 (2025) and MITRE ATLAS, so the report is usable as audit
+  evidence (FR-7). (added 2026-10-22, see §12)
 
 The report header must include: target URL, scan timestamp, scanner version,
 total duration, and an overall triage verdict ("look here first").
+
+### 7.1 User Scenarios (added 2026-10-22, see §12)
+
+- **US-1: PR gate.** A CI job runs a fast subset (FR-8) on every pull request
+  against the staging endpoint and fails the build when the overall verdict
+  reaches a configured level (`--fail-on`). `--dry-run` is used to review the
+  plan before enabling the gate.
+- **US-2: Monthly sweep.** A Sec engineer runs one sweep (FR-11) over all
+  internal LLM services and gets a single ranked triage report: which service
+  regressed, which category to investigate first.
+- **US-3: Audit evidence.** For an EU AI Act / NIST AI RMF assessment, the
+  engineer attaches the compliance-mapped report (FR-7): every finding
+  references OWASP LLM Top 10 and MITRE ATLAS identifiers.
 
 ## 8. Non-Functional Requirements
 
@@ -169,6 +270,13 @@ total duration, and an overall triage verdict ("look here first").
 - **NFR-4 Offline development.** A local mock server (see `examples/`) must
   allow developing and testing the scanner without a real LLM endpoint.
 - **NFR-5 Reproducibility.** Reports record scanner version and config hash.
+- **NFR-6 Offline by default.** (added 2026-10-22, see §12) A scan never makes
+  network calls beyond the configured target unless the user explicitly opts
+  in (FR-10 LLM-judge). No telemetry, no update checks, no cloud generation —
+  ever.
+- **NFR-7 Interface stability.** (added 2026-10-22, see §12) CLI flags and the
+  config schema do not break without a major version bump; deprecations are
+  announced at least one minor release ahead and keep working until then.
 
 ## 9. Comparison with Existing Tools
 
@@ -204,3 +312,20 @@ another one?" is a fair question.
 - **M2:** All probe categories (FR-1..FR-6) + JSON report.
 - **M3:** Baseline/heuristic detection + Markdown report.
 - **M4:** Hardening: dry-run, mock server, docs, examples, CI.
+- **M5:** (added 2026-10-22, see §12) Compliance mapping (FR-7) + scan
+  selection and request budget (FR-8) + transport resilience (retry/backoff
+  for transient errors and 429 with `Retry-After`).
+- **M6:** (added 2026-10-22, see §12) User-defined probes (FR-9) + optional
+  LLM-as-judge (FR-10) + multi-endpoint sweep (FR-11).
+
+## 12. Spec Changelog (added 2026-10-22)
+
+- **2026-10-22** — Post-M4 roadmap added after market research
+  (`docs/research/2026-10-22-market.md`): new functional requirements FR-7
+  (compliance mapping), FR-8 (scan selection and request budget), FR-9
+  (user-defined probes), FR-10 (optional LLM-as-judge, opt-in), FR-11
+  (multi-endpoint sweep); new non-functional requirements NFR-6 (offline by
+  default) and NFR-7 (interface stability); user scenarios §7.1 (US-1..US-3);
+  milestones M5 and M6; open-source/PyPI distribution stated in §1;
+  multi-turn scope clarified in §3 (remains out of scope for v1.x).
+  No existing content was removed.
