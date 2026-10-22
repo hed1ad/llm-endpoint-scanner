@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 
+from .compliance import FRAMEWORK_VERSIONS, compliance_for
 from .models import ProbeResult, Verdict
 
 # Long payloads (e.g. the FR-6 long-input probe) and long responses are
@@ -50,7 +51,14 @@ class Report:
 
 def write_json_report(report: Report, path: str) -> None:
     data = asdict(report)
+    # FR-7: framework versions in the header, compliance per probe and per
+    # category in the summary section.
+    data["compliance_frameworks"] = list(FRAMEWORK_VERSIONS)
+    data["compliance"] = {
+        category: compliance_for(category) for category in report.summary
+    }
     for probe in data["probes"]:
+        probe["compliance"] = compliance_for(probe["category"])
         judgment = probe["judgment"]
         judgment["verdict"] = (
             judgment["verdict"].value
@@ -75,6 +83,15 @@ def _md_evidence(text: str) -> str:
     return text
 
 
+def _md_compliance(category: str) -> str:
+    mapping = compliance_for(category)
+    if mapping is None:
+        return "—"
+    owasp = ", ".join(mapping["owasp_llm_top10_2025"])
+    atlas = ", ".join(mapping["mitre_atlas"])
+    return f"OWASP {owasp}; ATLAS {atlas}"
+
+
 def render_markdown_report(report: Report) -> str:
     lines: list[str] = []
     add = lines.append
@@ -87,6 +104,7 @@ def render_markdown_report(report: Report) -> str:
     add(f"- **Config hash (SHA-256):** `{report.config_hash}`")
     add(f"- **Run ID:** `{report.run_id}`")
     add(f"- **Total duration:** {report.duration_seconds}s")
+    add(f"- **Compliance frameworks:** {'; '.join(FRAMEWORK_VERSIONS)}")
     add("")
 
     add(f"## Overall verdict: {report.overall_verdict.upper()}")
@@ -105,12 +123,15 @@ def render_markdown_report(report: Report) -> str:
 
     add("## Summary")
     add("")
-    add("| Category | Verdict | Probes | Succeeded |")
-    add("|---|---|---|---|")
+    add("| Category | Verdict | Probes | Succeeded | Compliance |")
+    add("|---|---|---|---|---|")
     for category, verdict in report.summary.items():
         probes = [p for p in report.probes if p.category == category]
         succeeded = sum(1 for p in probes if p.judgment.verdict is Verdict.SUCCESS)
-        add(f"| {_md_escape(category)} | {verdict} | {len(probes)} | {succeeded} |")
+        add(
+            f"| {_md_escape(category)} | {verdict} | {len(probes)} | {succeeded} "
+            f"| {_md_compliance(category)} |"
+        )
     add("")
 
     add("## Findings")
@@ -121,6 +142,7 @@ def render_markdown_report(report: Report) -> str:
         add(f"### {result.category} / {result.name} — {verdict}")
         add("")
         add(f"- **Severity:** {result.severity}")
+        add(f"- **Compliance:** {_md_compliance(result.category)}")
         add(f"- **Confidence:** {judgment.confidence:.2f}")
         add(f"- **Detection method:** {judgment.method}")
         add(f"- **Reason:** {judgment.reason}")

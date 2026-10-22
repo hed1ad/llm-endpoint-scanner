@@ -64,9 +64,12 @@ Every scan produces two reports from the same run:
 - **JSON** — for automation. Per probe: category, payload sent, response
   received (verbatim evidence), verdict, confidence, detection method,
   severity. Header: target, timestamp, scanner version, config hash, duration.
+  Every probe and category also carries a `compliance` mapping to **OWASP Top
+  10 for LLM Applications 2025** and **MITRE ATLAS** (technique IDs), with the
+  framework versions named in the report header.
 - **Markdown** — for humans. Overall verdict, a "look here first" triage list
-  ordered by severity, a summary table, then per-finding detail with
-  request/response excerpts.
+  ordered by severity, a summary table with the OWASP/ATLAS compliance column,
+  then per-finding detail with request/response excerpts.
 
 Secrets (env-var credentials) never appear in reports, logs, or error
 messages — only header *names* are ever printed.
