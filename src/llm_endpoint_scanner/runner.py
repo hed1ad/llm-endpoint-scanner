@@ -79,7 +79,15 @@ def _run_probe(
     first_error: EndpointError | None = None
     for _ in range(probe.repetitions):
         try:
-            responses.append(client.send(payload, throttle=probe.respect_rate_limit))
+            # Burst probes must not retry: a rejection (e.g. HTTP 429) is the
+            # signal they measure, not a transient failure to ride out.
+            responses.append(
+                client.send(
+                    payload,
+                    throttle=probe.respect_rate_limit,
+                    retry=probe.repetitions <= 1,
+                )
+            )
         except EndpointError as exc:
             # For burst probes a rejection (e.g. HTTP 429) is the signal, not a
             # scan failure: keep going and let the judge count acceptances.

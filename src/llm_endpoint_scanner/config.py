@@ -32,6 +32,9 @@ class LimitsConfig(BaseModel):
     timeout_seconds: float = 30
     max_requests_per_second: float = 2
     max_probe_length: int = 8000
+    max_retries: int = Field(default=3, ge=0)
+    retry_backoff_seconds: float = Field(default=1.0, ge=0)
+    max_retry_delay_seconds: float = Field(default=30.0, ge=0)
 
 
 class ReportConfig(BaseModel):

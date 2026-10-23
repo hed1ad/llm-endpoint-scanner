@@ -105,6 +105,9 @@ endpoint:
 limits:
   timeout_seconds: 30
   max_requests_per_second: 2
+  max_retries: 3                # retries on timeouts, 5xx and 429
+  retry_backoff_seconds: 1.0    # exponential backoff base
+  max_retry_delay_seconds: 30   # cap for backoff and Retry-After
 
 report:
   json_path: report.json
@@ -167,6 +170,10 @@ llm-scan scan staging.yaml --include role_escape --max-requests 3 --dry-run
 - The scanner respects the configured `max_requests_per_second` for all
   traffic **except** the FR-6 burst probe, whose entire purpose is to test
   server-side rate limiting; the burst is hard-capped at 10 requests.
+- Transient failures — timeouts, connection errors, HTTP 429 and 5xx — are
+  retried with exponential backoff, honoring the `Retry-After` header and
+  capped by `max_retry_delay_seconds`. The FR-6 burst probe never retries: a
+  429 there is the signal it measures, not a failure.
 - Secrets are resolved from environment variables at request time and are
   never written to reports, logs, or error messages (NFR-2).
 - Reports record the scanner version and a SHA-256 hash of the config for

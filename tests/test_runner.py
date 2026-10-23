@@ -1,5 +1,6 @@
 import json
 import re
+import time
 
 import httpx
 
@@ -135,6 +136,7 @@ def test_rate_limited_burst_is_failed(monkeypatch):
 
 def test_endpoint_error_becomes_inconclusive(monkeypatch):
     monkeypatch.setenv("LLM_SCAN_TOKEN", SECRET)
+    monkeypatch.setattr(time, "sleep", lambda _: None)  # skip real backoff
     client = EndpointClient(
         CFG.endpoint,
         CFG.limits,
