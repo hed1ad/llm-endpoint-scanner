@@ -36,6 +36,21 @@ def test_load_valid_config(config_path):
     assert cfg.endpoint.response_path == "choices.0.message.content"
 
 
+def test_retry_limits_defaults(config_path):
+    cfg = load_config(config_path)
+    assert cfg.limits.max_retries == 3
+    assert cfg.limits.retry_backoff_seconds == 1.0
+    assert cfg.limits.max_retry_delay_seconds == 30.0
+
+
+def test_negative_max_retries_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLM_SCAN_TOKEN", "x")
+    path = tmp_path / "bad_retries.yaml"
+    path.write_text(VALID_YAML + "  max_retries: -1\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="max_retries"):
+        load_config(path)
+
+
 def test_invalid_yaml(tmp_path):
     path = tmp_path / "broken.yaml"
     path.write_text("endpoint: [unclosed", encoding="utf-8")
