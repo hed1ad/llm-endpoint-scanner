@@ -13,7 +13,7 @@ from rich.table import Table
 from . import __version__
 from .config import ConfigError, ScanConfig, load_config
 from .models import Verdict
-from .runner import run_scan, write_json_report, write_markdown_report
+from .runner import run_scan, scan_categories, write_json_report, write_markdown_report
 from .selection import ScanPlan, SelectionError, plan_scan
 
 app = typer.Typer(
@@ -149,7 +149,12 @@ def scan(
     include_names = _split_names(include)
     exclude_names = _split_names(exclude)
     try:
-        plan = plan_scan(include_names, exclude_names, max_requests)
+        plan = plan_scan(
+            include_names,
+            exclude_names,
+            max_requests,
+            categories=scan_categories(cfg),
+        )
     except SelectionError as exc:
         err_console.print(f"[bold red]Selection error:[/] {exc}")
         raise typer.Exit(code=2) from None
