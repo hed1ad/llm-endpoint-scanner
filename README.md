@@ -126,13 +126,41 @@ OpenAI-compatible template.
 
 ```text
 llm-scan scan CONFIG [--dry-run] [--fail-on never|success|inconclusive]
+                     [--include NAME]... [--exclude NAME]... [--max-requests N]
 llm-scan --version
 ```
 
-- `--dry-run` — print the exact scan plan (endpoint, limits, every probe with
-  its payload size and request count) without sending anything.
+- `--dry-run` — print the exact scan plan (endpoint, limits, every selected
+  probe with its payload size and request count, budget-skipped probes with
+  reasons) without sending anything.
 - `--fail-on` — exit code 1 when the overall verdict reaches the given level;
   use it to gate CI pipelines. Config errors always exit 2.
+- `--include NAME` — run only the named categories and/or probes. Repeatable
+  and comma-separated (`--include role_escape --include data_leakage` or
+  `--include role_escape,data_leakage`). Cannot be combined with `--exclude`.
+- `--exclude NAME` — skip the named categories and/or probes; everything else
+  runs. Cannot be combined with `--include`.
+- `--max-requests N` — hard request budget for the whole scan. The single
+  baseline control prompt counts against the budget (it always runs first).
+  A probe runs only if all its repetitions fit; probes that do not fit are
+  recorded in the report as skipped with a reason and are excluded from the
+  summary, the overall verdict, triage, and `--fail-on`. The budget is never
+  exceeded.
+
+Unknown names in `--include`/`--exclude` fail fast with exit 2, before any
+request is sent. Examples:
+
+```bash
+# fast CI gate: two categories only, capped at 20 requests
+llm-scan scan staging.yaml --include direct_injection,prompt_extraction \
+    --max-requests 20 --fail-on success
+
+# everything except the burst/rate-limit probes
+llm-scan scan staging.yaml --exclude missing_limits
+
+# review the plan before enabling the gate
+llm-scan scan staging.yaml --include role_escape --max-requests 3 --dry-run
+```
 
 ## Safety
 

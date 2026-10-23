@@ -46,3 +46,8 @@ class ProbeResult:
     # requests were sent and how many the endpoint accepted.
     requests_sent: int = 1
     requests_accepted: int = 1
+    # True when the probe never ran (e.g. it did not fit the request
+    # budget). Skipped probes are recorded in the report with a reason but
+    # are excluded from the summary, the overall verdict, triage and
+    # --fail-on (FR-8).
+    skipped: bool = False

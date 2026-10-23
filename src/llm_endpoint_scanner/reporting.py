@@ -36,7 +36,7 @@ class Report:
         """Categories that succeeded, worst severity first — "look here first"."""
         worst_by_category: dict[str, str] = {}
         for result in self.probes:
-            if result.judgment.verdict is not Verdict.SUCCESS:
+            if result.skipped or result.judgment.verdict is not Verdict.SUCCESS:
                 continue
             current = worst_by_category.get(result.category, "low")
             if _SEVERITY_RANK.get(result.severity, 0) > _SEVERITY_RANK.get(current, 0):
@@ -117,7 +117,7 @@ def render_markdown_report(report: Report) -> str:
     add("")
     for result in report.probes:
         judgment = result.judgment
-        verdict = judgment.verdict.value
+        verdict = "skipped" if result.skipped else judgment.verdict.value
         add(f"### {result.category} / {result.name} — {verdict}")
         add("")
         add(f"- **Severity:** {result.severity}")
@@ -130,7 +130,7 @@ def render_markdown_report(report: Report) -> str:
                 f"{result.requests_sent} accepted"
             )
         add("")
-        add("**Payload sent:**")
+        add("**Payload (not sent):**" if result.skipped else "**Payload sent:**")
         add("")
         add("```text")
         add(_md_evidence(result.payload_sent))
@@ -138,7 +138,9 @@ def render_markdown_report(report: Report) -> str:
         add("")
         add("**Response received:**")
         add("")
-        if result.response is None:
+        if result.skipped:
+            add("_Probe not executed._")
+        elif result.response is None:
             add("_No response (endpoint error)._")
         else:
             add("```text")

@@ -11,10 +11,10 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__
-from .config import ConfigError, load_config
+from .config import ConfigError, ScanConfig, load_config
 from .models import Verdict
-from .probes import ALL_CATEGORIES
 from .runner import run_scan, write_json_report, write_markdown_report
+from .selection import ScanPlan, SelectionError, plan_scan
 
 app = typer.Typer(
     help="Black-box security scanner for LLM endpoints.",
@@ -57,9 +57,18 @@ def main(
     """Black-box security scanner for LLM endpoints."""
 
 
-def _print_plan(cfg_path: Path) -> None:
+def _split_names(values: list[str] | None) -> list[str]:
+    """--include/--exclude accept repeated flags and comma-separated names."""
+    return [
+        name.strip()
+        for value in values or []
+        for name in value.split(",")
+        if name.strip()
+    ]
+
+
+def _print_plan(cfg: ScanConfig, plan: ScanPlan) -> None:
     """--dry-run: show exactly what would be sent, send nothing (NFR-1)."""
-    cfg = load_config(cfg_path)
     console.print(f"[bold]Dry run[/] — no requests will be sent to {cfg.endpoint.url}")
     console.print(
         f"Endpoint: {cfg.endpoint.method} {cfg.endpoint.url} "
@@ -70,26 +79,25 @@ def _print_plan(cfg_path: Path) -> None:
         f"max_rps={cfg.limits.max_requests_per_second}, "
         f"max_probe_length={cfg.limits.max_probe_length}"
     )
-    console.print("Baseline: 1 neutral control prompt (sent first)")
+    console.print("Baseline: 1 neutral control prompt (sent first, counts in budget)")
     table = Table(title="Planned probes")
     table.add_column("Category")
     table.add_column("Probe")
     table.add_column("Severity")
     table.add_column("Requests", justify="right")
     table.add_column("Payload chars", justify="right")
-    total = 1  # baseline
-    for category in ALL_CATEGORIES:
-        for probe in category.probes():
-            total += probe.repetitions
-            table.add_row(
-                category.category,
-                probe.name,
-                probe.severity,
-                str(probe.repetitions),
-                str(len(probe.payload_template)),
-            )
+    for probe in plan.probes:
+        table.add_row(
+            probe.category,
+            probe.name,
+            probe.severity,
+            str(probe.repetitions),
+            str(len(probe.payload_template)),
+        )
     console.print(table)
-    console.print(f"Total planned requests: {total}")
+    for probe, reason in plan.skipped:
+        console.print(f"[dim]Skipped:[/] {probe.category}/{probe.name} — {reason}")
+    console.print(f"Total planned requests: {plan.total_requests}")
 
 
 @app.command()
@@ -108,21 +116,60 @@ def scan(
             help="Exit 1 when the overall verdict reaches this level (for CI gating).",
         ),
     ] = FailOn.NEVER,
+    include: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--include",
+            help="Run only these categories/probes (repeatable, comma-separated).",
+        ),
+    ] = None,
+    exclude: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--exclude",
+            help="Skip these categories/probes (repeatable, comma-separated).",
+        ),
+    ] = None,
+    max_requests: Annotated[
+        int | None,
+        typer.Option(
+            "--max-requests",
+            help="Hard request budget for the whole scan, baseline included.",
+            min=1,
+        ),
+    ] = None,
 ) -> None:
     """Scan the endpoint described by CONFIG_PATH."""
     try:
-        if dry_run:
-            _print_plan(config_path)
-            return
         cfg = load_config(config_path)
     except ConfigError as exc:
         err_console.print(f"[bold red]Config error:[/] {exc}")
         raise typer.Exit(code=2) from None
 
+    include_names = _split_names(include)
+    exclude_names = _split_names(exclude)
+    try:
+        plan = plan_scan(include_names, exclude_names, max_requests)
+    except SelectionError as exc:
+        err_console.print(f"[bold red]Selection error:[/] {exc}")
+        raise typer.Exit(code=2) from None
+
+    if dry_run:
+        _print_plan(cfg, plan)
+        return
+
     console.print(f"Scanning [bold]{cfg.endpoint.url}[/] ...")
-    report = run_scan(cfg)
+    report = run_scan(
+        cfg, include=include_names, exclude=exclude_names, max_requests=max_requests
+    )
 
     for result in report.probes:
+        if result.skipped:
+            console.print(
+                f"  [dim]{'skipped':<12}[/] {result.category}/{result.name}"
+                f" — {result.judgment.reason}"
+            )
+            continue
         verdict = result.judgment.verdict.value
         style = _VERDICT_STYLE[verdict]
         console.print(f"  [{style}]{verdict:<12}[/] {result.category}/{result.name}")
