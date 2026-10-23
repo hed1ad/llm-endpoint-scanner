@@ -6,11 +6,24 @@ import hashlib
 import json
 import os
 import re
+import string
 from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
+INPUT_MARKER = "{{INPUT}}"
+CANARY_PLACEHOLDER = "canary"
+SEVERITIES = ("low", "medium", "high", "critical")
+_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 INPUT_MARKER = "{{INPUT}}"
 _ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -42,10 +55,66 @@ class ReportConfig(BaseModel):
     markdown_path: str = "report.md"
 
 
+class CustomProbeConfig(BaseModel):
+    """FR-9: a user-defined probe; runs exactly like a built-in one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    category: str
+    payload_template: str
+    severity: str
+    repetitions: int = Field(default=1, ge=1)
+
+    @field_validator("name", "category")
+    @classmethod
+    def _non_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("severity")
+    @classmethod
+    def _known_severity(cls, value: str) -> str:
+        if value not in SEVERITIES:
+            raise ValueError(f"must be one of: {', '.join(SEVERITIES)}")
+        return value
+
+    @field_validator("payload_template")
+    @classmethod
+    def _only_canary_placeholder(cls, value: str) -> str:
+        try:
+            fields = {
+                field_name
+                for _, field_name, _, _ in string.Formatter().parse(value)
+                if field_name is not None
+            }
+        except ValueError as exc:
+            raise ValueError(f"invalid format string: {exc}") from exc
+        if CANARY_PLACEHOLDER not in fields:
+            raise ValueError("must contain the {canary} placeholder")
+        unknown = fields - {CANARY_PLACEHOLDER}
+        if unknown:
+            raise ValueError(
+                f"unknown placeholder(s): {', '.join(sorted(unknown))}; "
+                "only {canary} is supported"
+            )
+        return value
+
+
 class ScanConfig(BaseModel):
     endpoint: EndpointConfig
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     report: ReportConfig = Field(default_factory=ReportConfig)
+    custom_probes: list[CustomProbeConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _unique_custom_probe_names(self) -> ScanConfig:
+        names = [probe.name for probe in self.custom_probes]
+        dupes = sorted({name for name in names if names.count(name) > 1})
+        if dupes:
+            raise ValueError(f"duplicate custom probe name(s): {', '.join(dupes)}")
+        return self
 
 
 def _count_markers(node: Any) -> int:
