@@ -13,6 +13,7 @@ from rich.table import Table
 from . import __version__
 from .config import ConfigError, ScanConfig, load_config
 from .models import Verdict
+from .reporting import Report
 from .runner import run_scan, write_json_report, write_markdown_report
 from .selection import ScanPlan, SelectionError, plan_scan
 
@@ -100,6 +101,39 @@ def _print_plan(cfg: ScanConfig, plan: ScanPlan) -> None:
     console.print(f"Total planned requests: {plan.total_requests}")
 
 
+def _print_results(report: Report) -> None:
+    for result in report.probes:
+        if result.skipped:
+            console.print(
+                f"  [dim]{'skipped':<12}[/] {result.category}/{result.name}"
+                f" — {result.judgment.reason}"
+            )
+            continue
+        verdict = result.judgment.verdict.value
+        style = _VERDICT_STYLE[verdict]
+        console.print(f"  [{style}]{verdict:<12}[/] {result.category}/{result.name}")
+
+    table = Table(title="Summary")
+    table.add_column("Category")
+    table.add_column("Verdict")
+    for category, verdict in report.summary.items():
+        table.add_row(category, f"[{_VERDICT_STYLE[verdict]}]{verdict}[/]")
+    console.print(table)
+    console.print(
+        f"Overall: [{_VERDICT_STYLE[report.overall_verdict]}]"
+        f"{report.overall_verdict}[/] "
+        f"({report.duration_seconds}s, run {report.run_id})"
+    )
+
+
+def _fail_triggered(fail_on: FailOn, overall_verdict: str) -> bool:
+    if fail_on is FailOn.SUCCESS:
+        return overall_verdict == Verdict.SUCCESS.value
+    if fail_on is FailOn.INCONCLUSIVE:
+        return overall_verdict in (Verdict.SUCCESS.value, Verdict.INCONCLUSIVE.value)
+    return False
+
+
 @app.command()
 def scan(
     config_path: Annotated[
@@ -163,42 +197,14 @@ def scan(
         cfg, include=include_names, exclude=exclude_names, max_requests=max_requests
     )
 
-    for result in report.probes:
-        if result.skipped:
-            console.print(
-                f"  [dim]{'skipped':<12}[/] {result.category}/{result.name}"
-                f" — {result.judgment.reason}"
-            )
-            continue
-        verdict = result.judgment.verdict.value
-        style = _VERDICT_STYLE[verdict]
-        console.print(f"  [{style}]{verdict:<12}[/] {result.category}/{result.name}")
-
-    table = Table(title="Summary")
-    table.add_column("Category")
-    table.add_column("Verdict")
-    for category, verdict in report.summary.items():
-        table.add_row(category, f"[{_VERDICT_STYLE[verdict]}]{verdict}[/]")
-    console.print(table)
-    console.print(
-        f"Overall: [{_VERDICT_STYLE[report.overall_verdict]}]"
-        f"{report.overall_verdict}[/] "
-        f"({report.duration_seconds}s, run {report.run_id})"
-    )
+    _print_results(report)
 
     write_json_report(report, cfg.report.json_path)
     console.print(f"JSON report written to {cfg.report.json_path}")
     write_markdown_report(report, cfg.report.markdown_path)
     console.print(f"Markdown report written to {cfg.report.markdown_path}")
 
-    triggered = (
-        fail_on is FailOn.SUCCESS and report.overall_verdict == Verdict.SUCCESS.value
-    ) or (
-        fail_on is FailOn.INCONCLUSIVE
-        and report.overall_verdict
-        in (Verdict.SUCCESS.value, Verdict.INCONCLUSIVE.value)
-    )
-    if triggered:
+    if _fail_triggered(fail_on, report.overall_verdict):
         err_console.print(
             f"Failing because --fail-on={fail_on.value} and the overall "
             f"verdict is {report.overall_verdict}."
