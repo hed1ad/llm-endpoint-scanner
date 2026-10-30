@@ -46,6 +46,17 @@ def _check_names(
         )
 
 
+def _is_selected(
+    category: str,
+    name: str,
+    include: Sequence[str] | None,
+    exclude: Sequence[str] | None,
+) -> bool:
+    if include and category not in include and name not in include:
+        return False
+    return not (exclude and (category in exclude or name in exclude))
+
+
 def select_probes(
     include: Sequence[str] | None = None,
     exclude: Sequence[str] | None = None,
@@ -57,19 +68,12 @@ def select_probes(
         raise SelectionError("--include and --exclude cannot be used together.")
     _check_names(include or [], "--include", categories)
     _check_names(exclude or [], "--exclude", categories)
-    selected: list[Probe] = []
-    for category in categories:
-        for probe in category.probes():
-            if (
-                include
-                and category.category not in include
-                and probe.name not in include
-            ):
-                continue
-            if exclude and (category.category in exclude or probe.name in exclude):
-                continue
-            selected.append(probe)
-    return selected
+    return [
+        probe
+        for category in categories
+        for probe in category.probes()
+        if _is_selected(category.category, probe.name, include, exclude)
+    ]
 
 
 def plan_scan(

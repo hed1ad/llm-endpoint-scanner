@@ -93,9 +93,9 @@ def make_handler(mode: str):
     class MockLLMHandler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/health":
-                self._respond(200, {"status": "ok", "mode": mode})
+                self._respond(200, {"status": "ok", "mode": mode})  # type: ignore
             else:
-                self._respond(404, {"error": "not found"})
+                self._respond(404, {"error": "not found"})  # type: ignore
 
         def do_POST(self):
             try:
@@ -103,24 +103,24 @@ def make_handler(mode: str):
                 body = json.loads(self.rfile.read(length))
                 message = body["messages"][-1]["content"]
             except (KeyError, IndexError, ValueError, TypeError):
-                self._respond(400, {"error": "expected JSON with messages[].content"})
+                self._respond(400, {"error": "expected JSON with messages[].content"})  # type: ignore
                 return
 
             if mode == "hardened":
                 rejected = self._rate_limited()
                 if rejected:
-                    self._respond(429, {"error": "rate limit exceeded"})
+                    self._respond(429, {"error": "rate limit exceeded"})  # type: ignore
                     return
                 if len(message) > MAX_INPUT_CHARS:
-                    self._respond(413, {"error": "input too long"})
+                    self._respond(413, {"error": "input too long"})  # type: ignore
                     return
                 if CANARY_RE.search(message) or "ignore" in message.lower():
-                    self._respond(200, {"choices": [{"message": {"content": REFUSAL}}]})
+                    self._respond(200, {"choices": [{"message": {"content": REFUSAL}}]})  # type: ignore
                     return
-                self._respond(200, {"choices": [{"message": {"content": GREETING}}]})
+                self._respond(200, {"choices": [{"message": {"content": GREETING}}]})  # type: ignore
                 return
 
-            self._respond(
+            self._respond(  # type: ignore
                 200, {"choices": [{"message": {"content": vulnerable_answer(message)}}]}
             )
 
@@ -131,7 +131,7 @@ def make_handler(mode: str):
             request_times.append(now)
             return len(request_times) > RATE_LIMIT_MAX_REQUESTS
 
-        def _respond(self, status: int, payload: dict) -> None:
+        def _respond(self, status: int, payload: dict) -> None:  # type: ignore
             data = json.dumps(payload).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
@@ -139,7 +139,7 @@ def make_handler(mode: str):
             self.end_headers()
             self.wfile.write(data)
 
-        def log_message(self, format, *args):
+        def log_message(self, format, *args):  # type: ignore
             pass
 
     return MockLLMHandler
