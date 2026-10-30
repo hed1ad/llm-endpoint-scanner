@@ -92,92 +92,118 @@ def _md_compliance(category: str) -> str:
     return f"OWASP {owasp}; ATLAS {atlas}"
 
 
-def render_markdown_report(report: Report) -> str:
-    lines: list[str] = []
-    add = lines.append
+def _md_header(report: Report) -> list[str]:
+    return [
+        "# LLM Endpoint Security Scan Report",
+        "",
+        f"- **Target:** `{report.target}`",
+        f"- **Scan timestamp:** {report.timestamp}",
+        f"- **Scanner version:** {report.scanner_version}",
+        f"- **Config hash (SHA-256):** `{report.config_hash}`",
+        f"- **Run ID:** `{report.run_id}`",
+        f"- **Total duration:** {report.duration_seconds}s",
+        f"- **Compliance frameworks:** {'; '.join(FRAMEWORK_VERSIONS)}",
+        "",
+    ]
 
-    add("# LLM Endpoint Security Scan Report")
-    add("")
-    add(f"- **Target:** `{report.target}`")
-    add(f"- **Scan timestamp:** {report.timestamp}")
-    add(f"- **Scanner version:** {report.scanner_version}")
-    add(f"- **Config hash (SHA-256):** `{report.config_hash}`")
-    add(f"- **Run ID:** `{report.run_id}`")
-    add(f"- **Total duration:** {report.duration_seconds}s")
-    add(f"- **Compliance frameworks:** {'; '.join(FRAMEWORK_VERSIONS)}")
-    add("")
 
-    add(f"## Overall verdict: {report.overall_verdict.upper()}")
-    add("")
+def _md_verdict(report: Report) -> list[str]:
+    lines = [f"## Overall verdict: {report.overall_verdict.upper()}", ""]
     triage = report.triage()
     if triage:
-        add("**Look here first** — categories where at least one probe succeeded,")
-        add("ordered by severity:")
-        add("")
-        for idx, (category, severity) in enumerate(triage, 1):
-            add(f"{idx}. `{category}` (severity: {severity})")
+        lines += [
+            "**Look here first** — categories where at least one probe succeeded,",
+            "ordered by severity:",
+            "",
+        ]
+        lines += [
+            f"{idx}. `{category}` (severity: {severity})"
+            for idx, (category, severity) in enumerate(triage, 1)
+        ]
     else:
-        add("No probe succeeded. Note: a clean report is not proof of safety —")
-        add("detection beyond canary markers is heuristic (see Limitations).")
-    add("")
+        lines += [
+            "No probe succeeded. Note: a clean report is not proof of safety —",
+            "detection beyond canary markers is heuristic (see Limitations).",
+        ]
+    lines.append("")
+    return lines
 
-    add("## Summary")
-    add("")
-    add("| Category | Verdict | Probes | Succeeded | Compliance |")
-    add("|---|---|---|---|---|")
+
+def _md_summary(report: Report) -> list[str]:
+    lines = [
+        "## Summary",
+        "",
+        "| Category | Verdict | Probes | Succeeded | Compliance |",
+        "|---|---|---|---|---|",
+    ]
     for category, verdict in report.summary.items():
         probes = [p for p in report.probes if p.category == category]
         succeeded = sum(1 for p in probes if p.judgment.verdict is Verdict.SUCCESS)
-        add(
+        lines.append(
             f"| {_md_escape(category)} | {verdict} | {len(probes)} | {succeeded} "
             f"| {_md_compliance(category)} |"
         )
-    add("")
+    lines.append("")
+    return lines
 
-    add("## Findings")
-    add("")
+
+def _md_response(result: ProbeResult) -> list[str]:
+    if result.skipped:
+        return ["_Probe not executed._"]
+    if result.response is None:
+        return ["_No response (endpoint error)._"]
+    return ["```text", _md_evidence(result.response), "```"]
+
+
+def _md_finding(result: ProbeResult) -> list[str]:
+    judgment = result.judgment
+    verdict = "skipped" if result.skipped else judgment.verdict.value
+    lines = [
+        f"### {result.category} / {result.name} — {verdict}",
+        "",
+        f"- **Severity:** {result.severity}",
+        f"- **Compliance:** {_md_compliance(result.category)}",
+        f"- **Confidence:** {judgment.confidence:.2f}",
+        f"- **Detection method:** {judgment.method}",
+        f"- **Reason:** {judgment.reason}",
+    ]
+    if result.requests_sent > 1:
+        lines.append(
+            f"- **Requests:** {result.requests_accepted}/"
+            f"{result.requests_sent} accepted"
+        )
+    lines += [
+        "",
+        "**Payload (not sent):**" if result.skipped else "**Payload sent:**",
+        "",
+        "```text",
+        _md_evidence(result.payload_sent),
+        "```",
+        "",
+        "**Response received:**",
+        "",
+        *_md_response(result),
+        "",
+    ]
+    return lines
+
+
+_MD_FOOTER = [
+    "---",
+    "",
+    "_Detection beyond canary markers is heuristic; false positives and "
+    "false negatives are expected. A clean report is not proof of "
+    "safety._",
+    "",
+]
+
+
+def render_markdown_report(report: Report) -> str:
+    lines = [*_md_header(report), *_md_verdict(report), *_md_summary(report)]
+    lines += ["## Findings", ""]
     for result in report.probes:
-        judgment = result.judgment
-        verdict = "skipped" if result.skipped else judgment.verdict.value
-        add(f"### {result.category} / {result.name} — {verdict}")
-        add("")
-        add(f"- **Severity:** {result.severity}")
-        add(f"- **Compliance:** {_md_compliance(result.category)}")
-        add(f"- **Confidence:** {judgment.confidence:.2f}")
-        add(f"- **Detection method:** {judgment.method}")
-        add(f"- **Reason:** {judgment.reason}")
-        if result.requests_sent > 1:
-            add(
-                f"- **Requests:** {result.requests_accepted}/"
-                f"{result.requests_sent} accepted"
-            )
-        add("")
-        add("**Payload (not sent):**" if result.skipped else "**Payload sent:**")
-        add("")
-        add("```text")
-        add(_md_evidence(result.payload_sent))
-        add("```")
-        add("")
-        add("**Response received:**")
-        add("")
-        if result.skipped:
-            add("_Probe not executed._")
-        elif result.response is None:
-            add("_No response (endpoint error)._")
-        else:
-            add("```text")
-            add(_md_evidence(result.response))
-            add("```")
-        add("")
-
-    add("---")
-    add("")
-    add(
-        "_Detection beyond canary markers is heuristic; false positives and "
-        "false negatives are expected. A clean report is not proof of "
-        "safety._"
-    )
-    add("")
+        lines += _md_finding(result)
+    lines += _MD_FOOTER
     return "\n".join(lines)
 
 
