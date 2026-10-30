@@ -147,18 +147,21 @@ class EndpointClient:
                 )
                 self._wait_before_retry(attempt, attempts, response)
                 continue
-            if response.status_code >= 400:
-                raise EndpointError(f"Endpoint returned HTTP {response.status_code}")
-            try:
-                data = response.json()
-            except ValueError as exc:
-                raise EndpointError("Endpoint returned non-JSON response") from exc
-            return extract_path(data, self._endpoint.response_path)
+            return self._extract_answer(response)
 
         assert last_error is not None  # the loop only exhausts via failures
         if attempts > 1:
             raise EndpointError(f"{last_error} (gave up after {attempts} attempts)")
         raise last_error
+
+    def _extract_answer(self, response: httpx.Response) -> str:
+        if response.status_code >= 400:
+            raise EndpointError(f"Endpoint returned HTTP {response.status_code}")
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise EndpointError("Endpoint returned non-JSON response") from exc
+        return extract_path(data, self._endpoint.response_path)
 
     def _wait_before_retry(
         self, attempt: int, attempts: int, response: httpx.Response | None
