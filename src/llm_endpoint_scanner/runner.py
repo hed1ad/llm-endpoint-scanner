@@ -12,6 +12,9 @@ from .config import ScanConfig, config_hash
 from .http_client import EndpointClient, EndpointError
 from .judge import BASELINE_PROMPT, CompositeJudge
 from .models import Judgment, Probe, ProbeResult, Verdict
+from .probes import ALL_CATEGORIES
+from .probes.base import ProbeCategory
+from .probes.custom import custom_probe_categories
 from .reporting import Report, write_json_report, write_markdown_report
 from .selection import plan_scan
 
@@ -19,6 +22,7 @@ __all__ = [
     "Report",
     "make_canary",
     "run_scan",
+    "scan_categories",
     "write_json_report",
     "write_markdown_report",
 ]
@@ -28,6 +32,11 @@ _VERDICT_RANK = {Verdict.FAILED: 0, Verdict.INCONCLUSIVE: 1, Verdict.SUCCESS: 2}
 
 def make_canary(run_id: str, seq: int) -> str:
     return f"CANARY_{run_id}_{seq:03d}"
+
+
+def scan_categories(cfg: ScanConfig) -> list[ProbeCategory]:
+    """Built-in probe packs plus any user-defined probes from the config (FR-9)."""
+    return [*ALL_CATEGORIES, *custom_probe_categories(cfg.custom_probes)]
 
 
 def _worst(verdicts: list[Verdict]) -> Verdict:
@@ -127,7 +136,7 @@ def run_scan(
     max_requests: int | None = None,
 ) -> Report:
     judge = judge or CompositeJudge()
-    plan = plan_scan(include, exclude, max_requests)
+    plan = plan_scan(include, exclude, max_requests, categories=scan_categories(cfg))
     run_id = secrets.token_hex(4)
     started_at = time.monotonic()
     results: list[ProbeResult] = []

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from .models import Probe
 from .probes import ALL_CATEGORIES
+from .probes.base import ProbeCategory
 
 # The neutral control prompt (Spec §6.2) always runs first and counts
 # against the budget like any other request.
@@ -31,14 +32,16 @@ class ScanPlan:
     total_requests: int = 0
 
 
-def _check_names(names: Sequence[str], flag: str) -> None:
-    categories = {c.category for c in ALL_CATEGORIES}
-    probes = {p.name for c in ALL_CATEGORIES for p in c.probes()}
-    unknown = sorted(set(names) - categories - probes)
+def _check_names(
+    names: Sequence[str], flag: str, categories: Sequence[ProbeCategory]
+) -> None:
+    known_categories = {c.category for c in categories}
+    probes = {p.name for c in categories for p in c.probes()}
+    unknown = sorted(set(names) - known_categories - probes)
     if unknown:
         raise SelectionError(
             f"Unknown {flag} name(s): {', '.join(unknown)}. "
-            f"Known categories: {', '.join(sorted(categories))}. "
+            f"Known categories: {', '.join(sorted(known_categories))}. "
             f"Known probes: {', '.join(sorted(probes))}."
         )
 
@@ -57,15 +60,17 @@ def _is_selected(
 def select_probes(
     include: Sequence[str] | None = None,
     exclude: Sequence[str] | None = None,
+    categories: Sequence[ProbeCategory] | None = None,
 ) -> list[Probe]:
     """Resolve include/exclude to the probe list, preserving category order."""
+    categories = categories or ALL_CATEGORIES
     if include and exclude:
         raise SelectionError("--include and --exclude cannot be used together.")
-    _check_names(include or [], "--include")
-    _check_names(exclude or [], "--exclude")
+    _check_names(include or [], "--include", categories)
+    _check_names(exclude or [], "--exclude", categories)
     return [
         probe
-        for category in ALL_CATEGORIES
+        for category in categories
         for probe in category.probes()
         if _is_selected(category.category, probe.name, include, exclude)
     ]
@@ -75,6 +80,7 @@ def plan_scan(
     include: Sequence[str] | None = None,
     exclude: Sequence[str] | None = None,
     max_requests: int | None = None,
+    categories: Sequence[ProbeCategory] | None = None,
 ) -> ScanPlan:
     """Apply selection and the request budget.
 
@@ -90,7 +96,7 @@ def plan_scan(
     probes: list[Probe] = []
     skipped: list[tuple[Probe, str]] = []
     spent = BASELINE_REQUESTS
-    for probe in select_probes(include, exclude):
+    for probe in select_probes(include, exclude, categories):
         if max_requests is not None and probe.repetitions > max_requests - spent:
             skipped.append(
                 (
